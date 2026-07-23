@@ -1,0 +1,10 @@
+Сообщение содержит мошенническое предложение и обман.
+This message is a scam / phishing attempt.
+Текст сообщения продвигает подделку документов.
+Fraudulent message asking for personal data/money.
+Жалоба на сообщение: мошенничество.
+Scam reply from this bot.
+Сообщение обманывает пользователей.
+Fake documents offer in this message.
+Phishing / social engineering in the message.
+Жалоба: сообщение связано с подделкой документов.

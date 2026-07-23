@@ -1,0 +1,294 @@
+{
+  "accounts": {
+    "248070613_telethon": {
+      "session_file": "248070613_telethon.session",
+      "phone": "959761150942",
+      "username": null,
+      "status": "ok",
+      "spamblock": false,
+      "last_error": null,
+      "id": "248070613_telethon",
+      "added_at": "2026-07-23T08:29:30.719133+00:00",
+      "updated_at": "2026-07-23T14:20:16.233666+00:00",
+      "user_id": 8769715279,
+      "checked_at": "2026-07-23T14:20:16.233648+00:00"
+    },
+    "248070621_telethon": {
+      "session_file": "248070621_telethon.session",
+      "phone": "959761086143",
+      "username": null,
+      "status": "ok",
+      "spamblock": false,
+      "last_error": null,
+      "id": "248070621_telethon",
+      "added_at": "2026-07-23T08:29:39.726466+00:00",
+      "updated_at": "2026-07-23T14:28:26.022100+00:00",
+      "user_id": 8783808241,
+      "checked_at": "2026-07-23T14:28:26.022078+00:00"
+    },
+    "243404491_telethon": {
+      "session_file": "243404491_telethon.session",
+      "phone": "12678211156",
+      "username": null,
+      "status": "ok",
+      "spamblock": false,
+      "last_error": null,
+      "id": "243404491_telethon",
+      "added_at": "2026-07-23T11:57:16.894313+00:00",
+      "updated_at": "2026-07-23T13:48:25.334953+00:00",
+      "user_id": 8908863802,
+      "checked_at": "2026-07-23T13:48:25.334935+00:00"
+    },
+    "245102949_telethon": {
+      "session_file": "245102949_telethon.session",
+      "phone": "15096602386",
+      "username": null,
+      "status": "ok",
+      "spamblock": false,
+      "last_error": null,
+      "id": "245102949_telethon",
+      "added_at": "2026-07-23T11:57:38.956232+00:00",
+      "updated_at": "2026-07-23T13:56:21.315800+00:00",
+      "user_id": 8965756993,
+      "checked_at": "2026-07-23T13:56:21.315785+00:00"
+    }
+  },
+  "targets": {
+    "resellerashabot": {
+      "selected": false,
+      "status": "deleted",
+      "username": "resellerashabot",
+      "added_at": "2026-07-22T16:56:44.419250+00:00",
+      "updated_at": "2026-07-23T08:41:55.883688+00:00",
+      "last_error": "Could not find a matching Constructor ID for the TLObject that was supposed to be read with ID 83314fca. See the FAQ for more details. Remaining bytes: b'\\xcaO1\\x83+@\\x00\\x02\\x10\\x00\\x00\\x00|$\\x99`\\x01\\x00\\x00\\x00\\x95\\x83\\x00\\\\V\\x000hQ\\xd0\\x90\\xd0\\xbd\\xd0\\xb5\\xd0\\xba\\xd0\\xb4\\xd0\\xbe\\xd1\\x82\\xd1\\x8b \\xd0\\xbf\\xd1\\x80\\xd0\\xbe \\xd0\\xb2\\xd0\\xbe\\xd0\\xb4\\xd0\\xb8\\xd1\\x82\\xd0\\xb5\\xd0\\xbb\\xd1\\x8c\\xd1\\x81\\xd0\\xba\\xd0\\xbe\\xd0\\xb5 \\xd1\\x85\\xd0\\xb0\\xd0\\xbc\\xd1\\x81\\xd1\\x82\\xd0\\xb2\\xd0\\xbe \\xd0\\xbd\\xd0\\xb0 \\xd0\\xb4\\xd0\\xbe\\xd1\\x80\\xd0\\xbe\\xd0\\xb3\\xd0\\xb5\\x00\\x00\\x0fresellerashabot\\x06\\xf7\\xd1\\x82\\x02\\x00\\x00\\x00\\xa0\\x10k\\x1bQ\\xe2\\tW\\x11\\x01\\x08\\x08\\xd0\\xe3o\\x7f;\\xf5\\xcf\\xf8QE\\x14\\x8bn\\xc7\\x00\\x00\\x05\\x00\\x00\\x00\\x06\\x00\\x00\\x00Y\\xaa@\\xa2\\xc2\\x929l\\xc0\\xf2P\\x98\\xd7\\xf3\\xf4\\x83U\\xf3\\x8a\\xfa\\xb1\\xf5\\x852'",
+      "last_check": "2026-07-22T18:50:35.705651+00:00",
+      "last_reported_at": "2026-07-22T19:37:06.601236+00:00",
+      "last_account": "17315036651",
+      "deleted_at": "2026-07-23T15:22:45.215636+00:00"
+    },
+    "rqbhdg7gv3s0mdfjb0bot": {
+      "selected": true,
+      "status": "active",
+      "username": "rqbhdg7gv3s0mdfjb0bot",
+      "added_at": "2026-07-22T19:06:47.168362+00:00",
+      "updated_at": "2026-07-23T15:22:45.418589+00:00",
+      "last_reported_at": "2026-07-23T14:28:46.394201+00:00",
+      "last_account": "248070621_telethon",
+      "deleted_at": null,
+      "last_check": "2026-07-23T15:22:45.418563+00:00",
+      "last_error": null
+    },
+    "ciu638drfyejpulsekbot": {
+      "selected": false,
+      "status": "deleted",
+      "username": "ciu638drfyejpulsekbot",
+      "added_at": "2026-07-22T19:06:47.170765+00:00",
+      "updated_at": "2026-07-23T08:41:55.888094+00:00",
+      "last_error": "Nobody is using this username or the username is unacceptable (caused by ResolveUsernameRequest)",
+      "deleted_at": "2026-07-23T15:22:45.614724+00:00"
+    },
+    "ay9bf5wwupuac8dmpwbot": {
+      "selected": true,
+      "status": "active",
+      "username": "ay9bf5wwupuac8dmpwbot",
+      "added_at": "2026-07-22T19:06:47.172192+00:00",
+      "updated_at": "2026-07-23T15:22:45.818512+00:00",
+      "last_reported_at": "2026-07-23T14:29:05.054915+00:00",
+      "last_account": "248070621_telethon",
+      "deleted_at": null,
+      "last_check": "2026-07-23T15:22:45.818462+00:00",
+      "last_error": null
+    },
+    "lhtulwtgbot": {
+      "selected": false,
+      "status": "deleted",
+      "username": "lhtulwtgbot",
+      "added_at": "2026-07-22T19:06:47.173248+00:00",
+      "updated_at": "2026-07-23T08:41:55.889962+00:00",
+      "last_reported_at": "2026-07-22T19:38:10.649675+00:00",
+      "last_account": "17315036651",
+      "deleted_at": "2026-07-23T15:22:46.017580+00:00",
+      "last_check": "2026-07-22T21:25:07.317997+00:00"
+    },
+    "haporenbot": {
+      "selected": true,
+      "status": "active",
+      "username": "haporenbot",
+      "added_at": "2026-07-22T19:06:47.174130+00:00",
+      "updated_at": "2026-07-23T15:22:46.254934+00:00",
+      "last_reported_at": "2026-07-23T14:21:21.350384+00:00",
+      "last_account": "248070613_telethon",
+      "deleted_at": null,
+      "last_check": "2026-07-23T15:22:46.254917+00:00",
+      "last_error": null
+    },
+    "timbukturobot": {
+      "selected": true,
+      "status": "active",
+      "username": "timbukturobot",
+      "added_at": "2026-07-22T19:06:47.174922+00:00",
+      "updated_at": "2026-07-23T15:22:46.484419+00:00",
+      "last_reported_at": "2026-07-23T14:21:42.673327+00:00",
+      "last_account": "248070613_telethon",
+      "deleted_at": null,
+      "last_check": "2026-07-23T15:22:46.484383+00:00",
+      "last_error": null
+    },
+    "thirtiethrobot": {
+      "selected": true,
+      "status": "active",
+      "username": "thirtiethrobot",
+      "added_at": "2026-07-22T19:06:47.175672+00:00",
+      "updated_at": "2026-07-23T15:22:46.776685+00:00",
+      "last_reported_at": "2026-07-23T14:22:01.722324+00:00",
+      "last_account": "248070613_telethon",
+      "deleted_at": null,
+      "last_check": "2026-07-23T15:22:46.776636+00:00",
+      "last_error": null
+    },
+    "onondagarobot": {
+      "selected": true,
+      "status": "active",
+      "username": "onondagarobot",
+      "added_at": "2026-07-22T19:06:47.176188+00:00",
+      "updated_at": "2026-07-23T15:22:47.068424+00:00",
+      "last_reported_at": "2026-07-23T14:22:22.282896+00:00",
+      "last_account": "248070613_telethon",
+      "deleted_at": null,
+      "last_check": "2026-07-23T15:22:47.068363+00:00",
+      "last_error": null
+    },
+    "trigger1robot": {
+      "selected": true,
+      "status": "active",
+      "username": "trigger1robot",
+      "added_at": "2026-07-22T19:06:47.176629+00:00",
+      "updated_at": "2026-07-23T15:22:47.319825+00:00",
+      "last_reported_at": "2026-07-23T14:22:44.131093+00:00",
+      "last_account": "248070613_telethon",
+      "deleted_at": null,
+      "last_check": "2026-07-23T15:22:47.319789+00:00",
+      "last_error": null
+    },
+    "ubbiijjonbot": {
+      "selected": true,
+      "status": "active",
+      "username": "ubbiijjonbot",
+      "added_at": "2026-07-22T19:06:47.177039+00:00",
+      "updated_at": "2026-07-23T15:22:47.531707+00:00",
+      "last_reported_at": "2026-07-23T14:23:06.210080+00:00",
+      "last_account": "248070613_telethon",
+      "deleted_at": null,
+      "last_check": "2026-07-23T15:22:47.531664+00:00",
+      "last_error": null
+    },
+    "komran_star": {
+      "selected": true,
+      "status": "active",
+      "username": "komran_star",
+      "added_at": "2026-07-22T19:06:47.177410+00:00",
+      "updated_at": "2026-07-23T15:22:47.736854+00:00",
+      "last_reported_at": "2026-07-23T14:23:23.012403+00:00",
+      "last_account": "248070613_telethon",
+      "deleted_at": null,
+      "last_check": "2026-07-23T15:22:47.736837+00:00",
+      "last_error": null
+    },
+    "o3kycz9ibot": {
+      "selected": false,
+      "status": "deleted",
+      "username": "o3kycz9ibot",
+      "added_at": "2026-07-22T20:58:00.138526+00:00",
+      "updated_at": "2026-07-23T08:41:55.894140+00:00",
+      "last_check": "2026-07-22T21:25:07.468652+00:00",
+      "deleted_at": "2026-07-23T15:22:47.932095+00:00"
+    }
+  },
+  "campaign": {
+    "active": true,
+    "started_at": "2026-07-23T12:43:37.000040+00:00",
+    "finished_at": null,
+    "current_round": 3,
+    "total_rounds": 5,
+    "target_usernames": [
+      "rqbhdg7gv3s0mdfjb0bot",
+      "ay9bf5wwupuac8dmpwbot",
+      "haporenbot",
+      "timbukturobot",
+      "thirtiethrobot",
+      "onondagarobot",
+      "trigger1robot",
+      "ubbiijjonbot",
+      "komran_star"
+    ],
+    "status": "running",
+    "last_error": null,
+    "checkpoints_done": [
+      "2"
+    ],
+    "report_language": "en",
+    "report_category": "illegal_docs"
+  },
+  "deleted_history": [
+    {
+      "username": "ciu638drfyejpulsekbot",
+      "detected_at": "2026-07-22T19:38:13.055488+00:00"
+    },
+    {
+      "username": "resellerashabot",
+      "detected_at": "2026-07-22T19:48:14.683134+00:00"
+    },
+    {
+      "username": "rqbhdg7gv3s0mdfjb0bot",
+      "detected_at": "2026-07-22T19:48:14.836452+00:00"
+    },
+    {
+      "username": "ay9bf5wwupuac8dmpwbot",
+      "detected_at": "2026-07-22T19:48:14.988976+00:00"
+    },
+    {
+      "username": "lhtulwtgbot",
+      "detected_at": "2026-07-22T19:48:15.141886+00:00"
+    },
+    {
+      "username": "haporenbot",
+      "detected_at": "2026-07-22T19:48:15.296447+00:00"
+    },
+    {
+      "username": "timbukturobot",
+      "detected_at": "2026-07-22T19:48:15.451957+00:00"
+    },
+    {
+      "username": "thirtiethrobot",
+      "detected_at": "2026-07-22T19:48:15.603814+00:00"
+    },
+    {
+      "username": "onondagarobot",
+      "detected_at": "2026-07-22T19:48:15.755256+00:00"
+    },
+    {
+      "username": "trigger1robot",
+      "detected_at": "2026-07-22T19:48:15.906821+00:00"
+    },
+    {
+      "username": "ubbiijjonbot",
+      "detected_at": "2026-07-22T19:48:16.060193+00:00"
+    },
+    {
+      "username": "komran_star",
+      "detected_at": "2026-07-22T19:48:16.212338+00:00"
+    },
+    {
+      "username": "lhtulwtgbot",
+      "detected_at": "2026-07-23T08:28:31.117814+00:00"
+    },
+    {
+      "username": "o3kycz9ibot",
+      "detected_at": "2026-07-23T08:28:32.373100+00:00"
+    }
+  ],
+  "settings": {
+    "report_language": "en",
+    "report_category": "illegal_docs"
+  }
+}
