@@ -8,7 +8,8 @@ from telethon.tl.types import User
 
 from accounts import account_manager
 from storage import storage, utc_now
-from tg_errors import is_tl_layer_error, is_username_gone, short_error
+from target_check import entity_is_dead, is_dead_peer_error, resolve_target
+from tg_errors import is_tl_layer_error, short_error
 
 logger = logging.getLogger(__name__)
 
@@ -109,10 +110,30 @@ class MonitorService:
             username = target["username"]
             prev_deleted = target.get("status") == "deleted"
             try:
-                entity = await client.get_entity(username)
-                if isinstance(entity, User) and entity.bot and getattr(entity, "deleted", False):
+                entity, err = await resolve_target(client, username)
+                if err == "gone" or entity is None:
                     await storage.mark_target_deleted(username)
                     deleted.append(username)
+                    logger.info("Target @%s gone (%s) via %s", username, err, reason)
+                    continue
+
+                if entity_is_dead(entity, expected_username=username):
+                    await storage.mark_target_deleted(username)
+                    deleted.append(username)
+                    logger.info(
+                        "Target @%s dead entity deleted=%s name=%r via %s",
+                        username,
+                        getattr(entity, "deleted", None),
+                        getattr(entity, "first_name", None),
+                        reason,
+                    )
+                    continue
+
+                # не бот и не канал — считаем мёртвой/невалидной целью
+                if isinstance(entity, User) and not getattr(entity, "bot", False):
+                    await storage.mark_target_deleted(username)
+                    deleted.append(username)
+                    logger.info("Target @%s is not a bot anymore via %s", username, reason)
                     continue
 
                 await storage.upsert_target(
@@ -129,12 +150,11 @@ class MonitorService:
                     restored += 1
             except Exception as e:
                 brief = short_error(e)
-                if is_username_gone(e):
+                if is_dead_peer_error(e):
                     await storage.mark_target_deleted(username)
                     deleted.append(username)
                     logger.info("Target @%s deleted (%s) via %s", username, brief, reason)
                 elif is_tl_layer_error(e):
-                    # не трогаем статус — живой бот часто падает на старом telethon
                     unknown.append(f"@{username}: {brief}")
                     await storage.upsert_target(
                         username,

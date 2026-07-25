@@ -14,6 +14,7 @@ from telethon.tl.types import (
     ReportResultAddComment,
     ReportResultChooseOption,
     ReportResultReported,
+    User,
 )
 
 from accounts import account_manager
@@ -35,7 +36,8 @@ from config import (
     report_categories_label,
 )
 from storage import storage, utc_now
-from tg_errors import is_tl_layer_error, is_username_gone, short_error
+from target_check import entity_is_dead, is_dead_peer_error, resolve_target
+from tg_errors import is_tl_layer_error, short_error
 
 logger = logging.getLogger(__name__)
 
@@ -358,13 +360,17 @@ class CampaignEngine:
         client = await account_manager.get_client(account_id)
 
         try:
-            entity = await client.get_entity(username)
+            entity, err = await resolve_target(client, username)
         except Exception as e:
-            brief = short_error(e)
-            if is_username_gone(e):
-                await storage.mark_target_deleted(username)
-                await self._notify(f"@{username} удалён/не найден ({account_id})")
-            elif is_tl_layer_error(e):
+            entity, err = None, short_error(e)
+
+        if err == "gone":
+            await storage.mark_target_deleted(username)
+            await self._notify(f"@{username} удалён/не найден ({account_id})")
+            return stats
+        if entity is None:
+            brief = err or "unknown"
+            if is_tl_layer_error(Exception(brief)):
                 await storage.upsert_target(
                     username, {"last_error": brief, "status": "active"}
                 )
@@ -374,6 +380,16 @@ class CampaignEngine:
                     username, {"status": "unreachable", "last_error": brief}
                 )
                 await self._notify(f"@{username} недоступен ({account_id}): {brief}")
+            return stats
+
+        if entity_is_dead(entity, expected_username=username):
+            await storage.mark_target_deleted(username)
+            await self._notify(f"@{username} удалён/заморожен ({account_id})")
+            return stats
+
+        if isinstance(entity, User) and not getattr(entity, "bot", False):
+            await storage.mark_target_deleted(username)
+            await self._notify(f"@{username} больше не бот ({account_id})")
             return stats
 
         try:
@@ -394,6 +410,10 @@ class CampaignEngine:
             await asyncio.sleep(min(e.seconds, 180))
             return stats
         except Exception as e:
+            if is_dead_peer_error(e):
+                await storage.mark_target_deleted(username)
+                await self._notify(f"@{username} мёртв при /start ({account_id})")
+                return stats
             await self._notify(
                 f"Не удалось написать @{username} с {account_id}: {short_error(e)}"
             )
