@@ -118,13 +118,16 @@ def language_kb() -> InlineKeyboardMarkup:
 
 
 def report_type_kb(lang: str) -> InlineKeyboardMarkup:
-    from config import REPORT_CATEGORIES, REPORT_TYPE_CHOICES
+    from config import BOTH_CATEGORY_ID, REPORT_CATEGORIES, REPORT_TYPE_CHOICES
 
     by_id = {c["id"]: c for c in REPORT_CATEGORIES}
     rows = []
     for cat_id in REPORT_TYPE_CHOICES:
-        cat = by_id[cat_id]
-        title = cat.get("short_title") or cat["title"]
+        if cat_id == BOTH_CATEGORY_ID:
+            title = "Обе категории"
+        else:
+            cat = by_id[cat_id]
+            title = cat.get("short_title") or cat["title"]
         rows.append(
             [
                 InlineKeyboardButton(
@@ -138,10 +141,9 @@ def report_type_kb(lang: str) -> InlineKeyboardMarkup:
 
 
 def _report_category_label(category_id: str | None) -> str:
-    from config import get_report_category
+    from config import report_categories_label
 
-    cat = get_report_category(category_id)
-    return cat.get("short_title") or cat["title"]
+    return report_categories_label(category_id)
 
 
 async def send_long(message: Message, text: str) -> None:
@@ -184,10 +186,12 @@ async def status_handler(message: Message) -> None:
     targets = storage.list_targets()
     camp = storage.campaign()
     selected = storage.selected_targets()
+    deleted_now = storage.deleted_targets()
+    dead_accs = storage.dead_accounts()
     recent = storage.deleted_last_days(3)
 
     by_status: dict[str, int] = {}
-    spam = ok = dead = 0
+    spam = ok = 0
     for acc in accounts.values():
         st = acc.get("status") or "unknown"
         by_status[st] = by_status.get(st, 0) + 1
@@ -195,27 +199,37 @@ async def status_handler(message: Message) -> None:
             spam += 1
         elif acc.get("spamblock") is False:
             ok += 1
-        if st == "dead":
-            dead += 1
+
+    active_bots = sum(1 for t in targets.values() if t.get("status") != "deleted")
 
     lines = [
         "=== СТАТУС ===",
         f"Кампания: {camp.get('status')} | раунд {camp.get('current_round')}/{camp.get('total_rounds')}",
-        f"Язык фраз: {camp.get('report_language') or storage.get_report_language()}",
-        f"Вид жалобы: {_report_category_label(camp.get('report_category') or storage.get_report_category())}",
+        f"Язык: {camp.get('report_language') or storage.get_report_language()} | "
+        f"{_report_category_label(camp.get('report_category') or storage.get_report_category())}",
         f"Активна: {'да' if camp.get('active') else 'нет'}",
-        f"Старт: {camp.get('started_at') or '—'}",
-        f"Финиш: {camp.get('finished_at') or '—'}",
         "",
-        f"Аккаунтов: {len(accounts)} | мёртвых: {dead}",
+        f"Аккаунтов: {len(accounts)} | мёртвых/битых: {len(dead_accs)}",
         f"Спамблок: да={spam}, нет={ok}, ?={len(accounts) - spam - ok}",
-        "По статусам: " + ", ".join(f"{k}={v}" for k, v in sorted(by_status.items())) or "—",
+        "Статусы акк.: " + (", ".join(f"{k}={v}" for k, v in sorted(by_status.items())) or "—"),
         "",
-        f"Целевых ботов: {len(targets)} | выбрано: {len(selected)}",
-        f"Удалено за 3 суток: {len(recent)}",
+        f"Ботов: {len(targets)} (активных {active_bots}) | выбрано: {len(selected)}",
+        f"Удалено сейчас: {len(deleted_now)} | за 3 суток: {len(recent)}",
     ]
     if selected:
         lines.append("Выбраны: " + ", ".join(f"@{u}" for u in selected[:40]))
+    if deleted_now:
+        lines.append(
+            "Удалённые боты: "
+            + ", ".join(f"@{t['username']}" for t in deleted_now[:30])
+        )
+    if dead_accs:
+        lines.append(
+            "Мёртвые акк.: "
+            + ", ".join(
+                f"{a.get('id')}({a.get('status')})" for a in dead_accs[:20]
+            )
+        )
     if camp.get("last_error"):
         lines.append(f"Ошибка: {camp['last_error']}")
 
@@ -226,8 +240,12 @@ async def status_handler(message: Message) -> None:
     for aid, acc in list(accounts.items())[:40]:
         sb = acc.get("spamblock")
         sb_s = "SB+" if sb is True else ("SB-" if sb is False else "SB?")
+        st = acc.get("status") or "?"
+        mark = "💀" if st in ("dead", "unauthorized", "error") else "•"
+        err = acc.get("last_error")
+        err_s = f" | {err}" if err else ""
         lines.append(
-            f"• {aid} | {acc.get('status')} | {sb_s} | @{acc.get('username') or '—'} | {acc.get('phone') or '—'}"
+            f"{mark} {aid} | {st} | {sb_s} | @{acc.get('username') or '—'}{err_s}"
         )
 
     lines.append("")
@@ -235,8 +253,14 @@ async def status_handler(message: Message) -> None:
     if not targets:
         lines.append("нет")
     for uname, t in list(targets.items())[:50]:
-        mark = "✓" if t.get("selected") else "·"
-        lines.append(f"{mark} @{uname} | {t.get('status')} | last={t.get('last_reported_at') or '—'}")
+        st = t.get("status") or "?"
+        if st == "deleted":
+            mark = "🗑"
+        elif t.get("selected"):
+            mark = "✅"
+        else:
+            mark = "⬜"
+        lines.append(f"{mark} @{uname} | {st}")
 
     await send_long(message, "\n".join(lines))
 
@@ -372,13 +396,34 @@ async def check_bots(message: Message) -> None:
 async def deleted_stats(message: Message) -> None:
     if not is_admin(message.from_user.id if message.from_user else None):
         return
+    now_list = storage.deleted_targets()
     items = storage.deleted_last_days(3)
-    if not items:
-        await message.answer("За 3 суток удалений не зафиксировано.")
-        return
-    lines = [f"Удалено за 3 суток: {len(items)}"]
-    for it in items[-50:]:
-        lines.append(f"• @{it['username']} — {it['detected_at']}")
+    dead_accs = storage.dead_accounts()
+
+    lines = [
+        f"🗑 Ботов удалено сейчас: {len(now_list)}",
+        f"📅 Уникальных удалений за 3 суток: {len(items)}",
+        f"💀 Мёртвых/битых аккаунтов: {len(dead_accs)}",
+        "",
+    ]
+    if now_list:
+        lines.append("--- Удалённые боты (сейчас) ---")
+        for t in now_list[:50]:
+            lines.append(f"• @{t['username']} — {t.get('deleted_at') or '—'}")
+        lines.append("")
+    if items:
+        lines.append("--- За 3 суток ---")
+        for it in items:
+            lines.append(f"• @{it['username']} — {it['detected_at']}")
+        lines.append("")
+    if dead_accs:
+        lines.append("--- Аккаунты ---")
+        for a in dead_accs[:40]:
+            lines.append(
+                f"• {a.get('id')} | {a.get('status')} | {a.get('last_error') or '—'}"
+            )
+    if not now_list and not items and not dead_accs:
+        lines.append("Пока пусто.")
     await send_long(message, "\n".join(lines))
 
 
@@ -733,23 +778,34 @@ async def cb_tgt_list(call: CallbackQuery) -> None:
         await call.answer()
         return
 
+    rows = _targets_select_rows(targets)
+    await call.message.answer(
+        "Галочки = куда идут жалобы (учитывается сразу, даже в активной кампании):",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=rows),
+    )
+    await call.answer()
+
+
+def _targets_select_rows(targets: dict) -> list:
     rows = []
     for uname, t in targets.items():
-        mark = "✅" if t.get("selected") else "⬜"
+        st = t.get("status") or "?"
+        if st == "deleted":
+            mark = "🗑"
+        elif t.get("selected"):
+            mark = "✅"
+        else:
+            mark = "⬜"
         rows.append(
             [
                 InlineKeyboardButton(
-                    text=f"{mark} @{uname} [{t.get('status')}]",
+                    text=f"{mark} @{uname} [{st}]",
                     callback_data=f"tgt:tog:{uname}",
                 )
             ]
         )
     rows.append([InlineKeyboardButton(text="Закрыть", callback_data="tgt:close")])
-    await call.message.answer(
-        "Нажмите чтобы выбрать/снять бота для жалоб:",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=rows),
-    )
-    await call.answer()
+    return rows
 
 
 @router.callback_query(F.data.startswith("tgt:tog:"))
@@ -762,25 +818,17 @@ async def cb_tgt_toggle(call: CallbackQuery) -> None:
     if not t:
         await call.answer("Не найден", show_alert=True)
         return
+    if t.get("status") == "deleted":
+        await call.answer("Бот удалён — жалобы на него не идут", show_alert=True)
+        return
     new_val = not t.get("selected", False)
     await storage.set_target_selected(uname, new_val)
     await call.answer(f"@{uname}: {'выбран' if new_val else 'снят'}")
-    # refresh list
-    targets = storage.list_targets()
-    rows = []
-    for u, tt in targets.items():
-        mark = "✅" if tt.get("selected") else "⬜"
-        rows.append(
-            [
-                InlineKeyboardButton(
-                    text=f"{mark} @{u} [{tt.get('status')}]",
-                    callback_data=f"tgt:tog:{u}",
-                )
-            ]
-        )
-    rows.append([InlineKeyboardButton(text="Закрыть", callback_data="tgt:close")])
+    rows = _targets_select_rows(storage.list_targets())
     try:
-        await call.message.edit_reply_markup(reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
+        await call.message.edit_reply_markup(
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=rows)
+        )
     except Exception:
         pass
 
@@ -807,9 +855,13 @@ async def cb_tgt_all_on(call: CallbackQuery) -> None:
     if not is_admin(call.from_user.id):
         await call.answer("Нет доступа", show_alert=True)
         return
-    for uname in storage.list_targets():
+    n = 0
+    for uname, t in storage.list_targets().items():
+        if t.get("status") == "deleted":
+            continue
         await storage.set_target_selected(uname, True)
-    await call.message.answer("Все боты выбраны.")
+        n += 1
+    await call.message.answer(f"Выбрано ботов: {n} (удалённые пропущены).")
     await call.answer()
 
 
@@ -820,7 +872,7 @@ async def cb_tgt_all_off(call: CallbackQuery) -> None:
         return
     for uname in storage.list_targets():
         await storage.set_target_selected(uname, False)
-    await call.message.answer("Выбор снят со всех.")
+    await call.message.answer("Выбор снят со всех. Жалобы на них больше не идут.")
     await call.answer()
 
 

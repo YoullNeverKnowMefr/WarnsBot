@@ -131,6 +131,29 @@ class Storage:
             if t.get("selected") and t.get("status") != "deleted"
         ]
 
+    def is_target_active(self, username: str) -> bool:
+        """Выбран и не удалён — можно слать жалобы."""
+        key = username.lstrip("@").lower()
+        t = self.data["targets"].get(key)
+        if not t:
+            return False
+        return bool(t.get("selected")) and t.get("status") != "deleted"
+
+    def deleted_targets(self) -> list[dict]:
+        """Текущие цели со статусом deleted."""
+        return [
+            t
+            for t in self.data["targets"].values()
+            if t.get("status") == "deleted"
+        ]
+
+    def dead_accounts(self) -> list[dict]:
+        return [
+            acc
+            for acc in self.data["accounts"].values()
+            if acc.get("status") in ("dead", "unauthorized", "error")
+        ]
+
     # ---- campaign ----
     async def update_campaign(self, **kwargs: Any) -> None:
         self.data["campaign"].update(kwargs)
@@ -143,27 +166,71 @@ class Storage:
         key = username.lstrip("@").lower()
         target = self.data["targets"].get(key)
         already = bool(target and target.get("status") == "deleted")
+        ts = detected_at or utc_now()
         if target:
             target["status"] = "deleted"
-            target["deleted_at"] = detected_at or utc_now()
+            target["deleted_at"] = ts
             target["selected"] = False
         if not already:
-            self.data["deleted_history"].append(
-                {"username": key, "detected_at": detected_at or utc_now()}
-            )
+            hist = self.data.setdefault("deleted_history", [])
+            # не дублировать ту же цель за последние сутки
+            recent_same = False
+            try:
+                now_ts = datetime.fromisoformat(ts).timestamp()
+            except Exception:
+                now_ts = datetime.now(timezone.utc).timestamp()
+            for item in reversed(hist[-50:]):
+                if item.get("username") != key:
+                    continue
+                try:
+                    prev = datetime.fromisoformat(item["detected_at"]).timestamp()
+                except Exception:
+                    continue
+                if now_ts - prev < 86400:
+                    recent_same = True
+                    break
+            if not recent_same:
+                hist.append({"username": key, "detected_at": ts})
         await self.save()
 
     def deleted_last_days(self, days: int = 3) -> list[dict]:
+        """Уникальные удаления за N суток (последняя фиксация по username)."""
         cutoff = datetime.now(timezone.utc).timestamp() - days * 86400
-        result = []
+        latest: dict[str, dict] = {}
         for item in self.data.get("deleted_history", []):
             try:
                 ts = datetime.fromisoformat(item["detected_at"]).timestamp()
             except Exception:
                 continue
+            if ts < cutoff:
+                continue
+            uname = item.get("username") or ""
+            if not uname:
+                continue
+            prev = latest.get(uname)
+            if prev is None:
+                latest[uname] = item
+                continue
+            try:
+                prev_ts = datetime.fromisoformat(prev["detected_at"]).timestamp()
+            except Exception:
+                latest[uname] = item
+                continue
+            if ts > prev_ts:
+                latest[uname] = item
+        # добавить текущие deleted, если их ещё нет в истории периода
+        for t in self.deleted_targets():
+            uname = t.get("username") or ""
+            if not uname or uname in latest:
+                continue
+            detected = t.get("deleted_at") or t.get("updated_at") or utc_now()
+            try:
+                ts = datetime.fromisoformat(detected).timestamp()
+            except Exception:
+                ts = datetime.now(timezone.utc).timestamp()
             if ts >= cutoff:
-                result.append(item)
-        return result
+                latest[uname] = {"username": uname, "detected_at": detected}
+        return sorted(latest.values(), key=lambda x: x.get("detected_at") or "")
 
     def get_report_language(self) -> str:
         settings = self.data.setdefault("settings", {})
@@ -184,6 +251,10 @@ class Storage:
         return cat
 
     async def set_report_category(self, category_id: str) -> None:
+        from config import REPORT_TYPE_CHOICES
+
+        if category_id not in REPORT_TYPE_CHOICES:
+            return
         self.data.setdefault("settings", {})["report_category"] = category_id
         await self.save()
 

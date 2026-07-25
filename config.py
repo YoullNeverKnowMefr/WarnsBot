@@ -93,14 +93,29 @@ REPORT_CATEGORIES = [
     },
 ]
 
-# Виды жалоб, доступные для выбора в меню (порядок кнопок)
-REPORT_TYPE_CHOICES = ("illegal_docs", "fraud")
+# Виды жалоб в меню: обе категории сразу = "both"
+REPORT_TYPE_CHOICES = ("illegal_docs", "fraud", "both")
 DEFAULT_REPORT_CATEGORY = "illegal_docs"
+BOTH_CATEGORY_ID = "both"
 
 
 def get_report_category(category_id: str | None) -> dict:
     by_id = {c["id"]: c for c in REPORT_CATEGORIES}
+    if category_id == BOTH_CATEGORY_ID:
+        return REPORT_CATEGORIES[0]
     return by_id.get(category_id or "") or by_id[DEFAULT_REPORT_CATEGORY]
+
+
+def get_report_categories(category_id: str | None) -> list[dict]:
+    """Одна или обе категории для кампании."""
+    if (category_id or "") == BOTH_CATEGORY_ID:
+        return list(REPORT_CATEGORIES)
+    return [get_report_category(category_id)]
+
+
+def report_categories_label(category_id: str | None) -> str:
+    cats = get_report_categories(category_id)
+    return " + ".join(c.get("short_title") or c["title"] for c in cats)
 
 DEFAULT_BOT_REPORTS = [
     "Подделка документов, незаконные услуги.",

@@ -31,7 +31,8 @@ from config import (
     ROUND_DELAY_MAX_SEC,
     ROUND_DELAY_MIN_SEC,
     SKIP_SPAMBLOCKED,
-    get_report_category,
+    get_report_categories,
+    report_categories_label,
 )
 from storage import storage, utc_now
 from tg_errors import is_tl_layer_error, is_username_gone, short_error
@@ -89,19 +90,25 @@ class CampaignEngine:
         self._stop = asyncio.Event()
         self.notify_callback = None
         self._language = "ru"
-        self._category: dict = get_report_category(None)
+        self._categories: list[dict] = get_report_categories(None)
+        self._category_id = "illegal_docs"
 
     @property
     def running(self) -> bool:
         return self._task is not None and not self._task.done()
 
-    async def _notify(self, text: str) -> None:
+    async def _notify(self, text: str, *, chat: bool = False) -> None:
+        """chat=True — короткое сообщение в Telegram; иначе только в лог."""
         logger.info(text)
-        if self.notify_callback:
+        if chat and self.notify_callback:
             try:
                 await self.notify_callback(text)
             except Exception:
                 logger.exception("notify failed")
+
+    def _current_targets(self) -> list[str]:
+        """Актуальный выбор галочек (не снимок на старте)."""
+        return storage.selected_targets()
 
     async def start(
         self,
@@ -119,7 +126,8 @@ class CampaignEngine:
         if not phrases:
             return f"Нет фраз для языка {lang}. Добавьте файл phrases_{lang}.txt"
 
-        category = get_report_category(category_id or storage.get_report_category())
+        cat_id = category_id or storage.get_report_category()
+        categories = get_report_categories(cat_id)
 
         targets = target_usernames or storage.selected_targets()
         if not targets:
@@ -130,10 +138,11 @@ class CampaignEngine:
             return "Нет доступных аккаунтов (без спамблока/мёртвых). Добавьте аккаунты."
 
         self._language = lang
-        self._category = category
+        self._categories = categories
+        self._category_id = cat_id
         self._stop.clear()
         await storage.set_report_language(lang)
-        await storage.set_report_category(category["id"])
+        await storage.set_report_category(cat_id)
         await storage.update_campaign(
             active=True,
             started_at=utc_now(),
@@ -145,13 +154,18 @@ class CampaignEngine:
             last_error=None,
             checkpoints_done=[],
             report_language=lang,
-            report_category=category["id"],
+            report_category=cat_id,
         )
         self._task = asyncio.create_task(
-            self._run(targets, accounts, phrases, lang, category), name="campaign"
+            self._run(targets, accounts, phrases, lang, categories, cat_id),
+            name="campaign",
         )
         label = LANGUAGE_LABELS.get(lang, lang)
-        cat_label = category.get("short_title") or category["title"]
+        cat_label = report_categories_label(cat_id)
+        if len(categories) > 1:
+            per = f"по 1 жалобе каждого вида на бота и на сообщение ({len(categories)} вида)"
+        else:
+            per = f"жалоб на бота/сообщение: {REPORTS_PER_BOT}/{REPORTS_PER_MESSAGE}"
         return (
             f"Кампания запущена.\n"
             f"Язык фраз: {label} ({len(phrases)} шт.)\n"
@@ -160,7 +174,7 @@ class CampaignEngine:
             f"Аккаунтов: {len(accounts)}\n"
             f"Раундов: {CAMPAIGN_ROUNDS} (пауза ~{ROUND_DELAY_MIN_SEC // 60} мин)\n"
             f"Между аккаунтами: ~{ACCOUNT_DELAY_SEC // 60} мин\n"
-            f"Жалоб на бота/сообщение: {REPORTS_PER_BOT}/{REPORTS_PER_MESSAGE}"
+            f"{per}"
         )
 
     async def stop(self) -> str:
@@ -169,7 +183,7 @@ class CampaignEngine:
             return "Кампания не запущена."
         self._stop.set()
         await storage.update_campaign(status="stopping")
-        await self._notify("Остановка кампании…")
+        await self._notify("Остановка кампании…", chat=True)
         return "Остановка кампании запрошена."
 
     async def _run(
@@ -178,25 +192,42 @@ class CampaignEngine:
         accounts: list[str],
         phrases: list[str],
         lang: str,
-        category: dict,
+        categories: list[dict],
+        category_id: str,
     ) -> None:
-        cat_label = category.get("short_title") or category["title"]
+        cat_label = report_categories_label(category_id)
         try:
             for round_no in range(1, CAMPAIGN_ROUNDS + 1):
                 if self._stop.is_set():
                     break
 
-                await storage.update_campaign(current_round=round_no, status="running")
+                targets = self._current_targets()
+                await storage.update_campaign(
+                    current_round=round_no,
+                    status="running",
+                    target_usernames=targets,
+                )
+                if not targets:
+                    await self._notify(
+                        f"⚠ Раунд {round_no}: нет выбранных ботов — стоп",
+                        chat=True,
+                    )
+                    break
+
                 await self._notify(
                     f"▶ Раунд {round_no}/{CAMPAIGN_ROUNDS} | "
-                    f"язык={LANGUAGE_LABELS.get(lang, lang)} | жалобы={cat_label}"
+                    f"ботов={len(targets)} | {cat_label}",
+                    chat=True,
                 )
 
                 alive = await self._filter_accounts(accounts)
                 if not alive:
-                    await self._notify("⚠ Нет живых аккаунтов без спамблока — стоп")
+                    await self._notify("⚠ Нет живых аккаунтов — стоп", chat=True)
                     break
 
+                round_peer = 0
+                round_msg = 0
+                skipped = 0
                 for idx, account_id in enumerate(alive):
                     if self._stop.is_set():
                         break
@@ -207,26 +238,52 @@ class CampaignEngine:
                         )
                         if not info or info.get("status") in ("dead", "unauthorized", "2fa"):
                             await self._notify(f"⏭ {account_id} недоступен — пропуск")
+                            skipped += 1
                             continue
                         if SKIP_SPAMBLOCKED and info.get("spamblock") is True:
-                            await self._notify(f"⏭ {account_id} спамблок — пропуск (защита)")
+                            await self._notify(f"⏭ {account_id} спамблок — пропуск")
+                            skipped += 1
                             continue
 
+                    targets = self._current_targets()
+                    if not targets:
+                        await self._notify("Нет выбранных ботов — выход из раунда")
+                        break
+
+                    acc_peer = 0
+                    acc_msg = 0
+                    acc_bots = 0
                     await self._notify(
                         f"Аккаунт {account_id} ({idx + 1}/{len(alive)}) → {len(targets)} бот(ов)"
                     )
                     for username in list(targets):
                         if self._stop.is_set():
                             break
+                        if not storage.is_target_active(username):
+                            await self._notify(f"пропуск @{username} (снят/удалён)")
+                            continue
                         try:
-                            await self._process_target(
-                                account_id, username, phrases, lang, category
+                            stats = await self._process_target(
+                                account_id, username, phrases, lang, categories
                             )
+                            acc_peer += stats.get("peer", 0)
+                            acc_msg += stats.get("msg", 0)
+                            if stats.get("peer", 0) or stats.get("msg", 0):
+                                acc_bots += 1
                         except Exception as e:
                             logger.exception("process %s via %s", username, account_id)
                             await self._notify(
                                 f"Ошибка {account_id} → @{username}: {short_error(e)}"
                             )
+
+                    round_peer += acc_peer
+                    round_msg += acc_msg
+                    await self._notify(
+                        f"📊 {account_id}: на бота={acc_peer}, "
+                        f"на сообщ.={acc_msg}, ботов={acc_bots} "
+                        f"(всего жалоб={acc_peer + acc_msg})",
+                        chat=True,
+                    )
 
                     if idx < len(alive) - 1 and not self._stop.is_set():
                         await self._notify(
@@ -234,10 +291,19 @@ class CampaignEngine:
                         )
                         await self._sleep(ACCOUNT_DELAY_SEC)
 
+                await self._notify(
+                    f"■ Раунд {round_no}/{CAMPAIGN_ROUNDS}: "
+                    f"жалоб={round_peer + round_msg} "
+                    f"(бот={round_peer}, сообщ.={round_msg}), "
+                    f"пропуск акк.={skipped}",
+                    chat=True,
+                )
+
                 if round_no < CAMPAIGN_ROUNDS and not self._stop.is_set():
                     delay = random.randint(ROUND_DELAY_MIN_SEC, ROUND_DELAY_MAX_SEC)
                     await self._notify(
-                        f"⏸ Раунд {round_no} готов. Ждём {delay // 60} мин до раунда {round_no + 1}"
+                        f"⏸ Ждём {delay // 60} мин до раунда {round_no + 1}",
+                        chat=True,
                     )
                     await self._sleep(delay)
 
@@ -247,16 +313,16 @@ class CampaignEngine:
                 status=status,
                 finished_at=utc_now(),
             )
-            await self._notify(
-                f"■ Кампания завершена ({status}). "
-                f"Через 12ч придёт контроль удаления целевых ботов."
-            )
+            await self._notify(f"■ Кампания завершена ({status}).", chat=True)
         except Exception as e:
             logger.exception("campaign crashed")
             await storage.update_campaign(
-                active=False, status="error", last_error=str(e), finished_at=utc_now()
+                active=False,
+                status="error",
+                last_error=short_error(e),
+                finished_at=utc_now(),
             )
-            await self._notify(f"✖ Кампания упала: {e}")
+            await self._notify(f"✖ Кампания упала: {short_error(e)}", chat=True)
 
     async def _filter_accounts(self, accounts: list[str]) -> list[str]:
         alive = []
@@ -284,8 +350,10 @@ class CampaignEngine:
         username: str,
         phrases: list[str],
         lang: str,
-        category: dict,
-    ) -> None:
+        categories: list[dict],
+    ) -> dict:
+        """Вернуть {"peer": N, "msg": N} — сколько жалоб ушло."""
+        stats = {"peer": 0, "msg": 0}
         username = username.lstrip("@").lower()
         client = await account_manager.get_client(account_id)
 
@@ -305,8 +373,8 @@ class CampaignEngine:
                 await storage.upsert_target(
                     username, {"status": "unreachable", "last_error": brief}
                 )
-                await self._notify(f"@{username} недоступен для {account_id}: {brief}")
-            return
+                await self._notify(f"@{username} недоступен ({account_id}): {brief}")
+            return stats
 
         try:
             try:
@@ -320,11 +388,11 @@ class CampaignEngine:
             await asyncio.sleep(random.uniform(2.5, 4.5))
         except UserIsBlockedError:
             await self._notify(f"{account_id} заблокирован ботом @{username}")
-            return
+            return stats
         except FloodWaitError as e:
             await self._notify(f"FloodWait {e.seconds}s на {account_id} — пауза")
             await asyncio.sleep(min(e.seconds, 180))
-            return
+            return stats
         except Exception as e:
             await self._notify(
                 f"Не удалось написать @{username} с {account_id}: {short_error(e)}"
@@ -339,61 +407,69 @@ class CampaignEngine:
         if bot_message is None and messages:
             bot_message = messages[0]
 
-        for _ in range(REPORTS_PER_BOT):
-            if self._stop.is_set():
-                return
-            text = random_complaint_text(phrases, lang)
-            try:
-                await self._report_peer(client, entity, text, category)
-                logger.info(
-                    "Peer report ok | %s → @%s | %s | %s",
-                    account_id,
-                    username,
-                    category["id"],
-                    text[:80],
-                )
-            except FloodWaitError as e:
-                await self._notify(f"FloodWait {e.seconds}s (peer) {account_id}")
-                await asyncio.sleep(min(e.seconds, 120))
-            except Exception as e:
-                logger.warning(
-                    "Peer report fail %s @%s [%s]: %s",
-                    account_id,
-                    username,
-                    category["id"],
-                    e,
-                )
-            await asyncio.sleep(random.uniform(1.2, 2.5))
+        # одна категория → N жалоб; две → по 1 каждого вида
+        peer_times = REPORTS_PER_BOT if len(categories) == 1 else 1
+        msg_times = REPORTS_PER_MESSAGE if len(categories) == 1 else 1
 
-        if bot_message is not None:
-            for _ in range(REPORTS_PER_MESSAGE):
+        for category in categories:
+            for _ in range(peer_times):
                 if self._stop.is_set():
-                    return
+                    return stats
                 text = random_complaint_text(phrases, lang)
                 try:
-                    await self._report_message(
-                        client, entity, bot_message.id, text, category
-                    )
+                    await self._report_peer(client, entity, text, category)
+                    stats["peer"] += 1
                     logger.info(
-                        "Msg report ok | %s → @%s msg=%s | %s | %s",
+                        "Peer report ok | %s → @%s | %s | %s",
                         account_id,
                         username,
-                        bot_message.id,
                         category["id"],
                         text[:80],
                     )
                 except FloodWaitError as e:
-                    await self._notify(f"FloodWait {e.seconds}s (msg) {account_id}")
+                    await self._notify(f"FloodWait {e.seconds}s (peer) {account_id}")
                     await asyncio.sleep(min(e.seconds, 120))
                 except Exception as e:
                     logger.warning(
-                        "Msg report fail %s @%s [%s]: %s",
+                        "Peer report fail %s @%s [%s]: %s",
                         account_id,
                         username,
                         category["id"],
                         e,
                     )
                 await asyncio.sleep(random.uniform(1.2, 2.5))
+
+        if bot_message is not None:
+            for category in categories:
+                for _ in range(msg_times):
+                    if self._stop.is_set():
+                        return stats
+                    text = random_complaint_text(phrases, lang)
+                    try:
+                        await self._report_message(
+                            client, entity, bot_message.id, text, category
+                        )
+                        stats["msg"] += 1
+                        logger.info(
+                            "Msg report ok | %s → @%s msg=%s | %s | %s",
+                            account_id,
+                            username,
+                            bot_message.id,
+                            category["id"],
+                            text[:80],
+                        )
+                    except FloodWaitError as e:
+                        await self._notify(f"FloodWait {e.seconds}s (msg) {account_id}")
+                        await asyncio.sleep(min(e.seconds, 120))
+                    except Exception as e:
+                        logger.warning(
+                            "Msg report fail %s @%s [%s]: %s",
+                            account_id,
+                            username,
+                            category["id"],
+                            e,
+                        )
+                    await asyncio.sleep(random.uniform(1.2, 2.5))
         else:
             await self._notify(f"@{username}: нет сообщения для жалобы ({account_id})")
 
@@ -401,6 +477,7 @@ class CampaignEngine:
             username,
             {"last_reported_at": utc_now(), "last_account": account_id, "status": "active"},
         )
+        return stats
 
     async def _report_peer(self, client, entity, text: str, category: dict) -> None:
         await client(
