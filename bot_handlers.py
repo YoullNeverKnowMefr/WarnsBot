@@ -28,7 +28,26 @@ from storage import storage
 logger = logging.getLogger(__name__)
 router = Router()
 
-USERNAME_RE = re.compile(r"@?([A-Za-z0-9_]{4,})")
+USERNAME_RE = re.compile(r"@([A-Za-z0-9_]{4,32})\b", re.IGNORECASE)
+TME_RE = re.compile(
+    r"(?:https?://)?(?:t\.me|telegram\.me|telegram\.dog)/([A-Za-z0-9_]{4,32})\b",
+    re.IGNORECASE,
+)
+BARE_USER_RE = re.compile(r"\b([A-Za-z][A-Za-z0-9_]{3,31})\b")
+SKIP_TOKENS = {
+    "http",
+    "https",
+    "t",
+    "me",
+    "telegram",
+    "dog",
+    "www",
+    "joinchat",
+    "addstickers",
+    "share",
+    "proxy",
+    "socks",
+}
 
 
 class Form(StatesGroup):
@@ -92,8 +111,10 @@ def texts_kb() -> InlineKeyboardMarkup:
         inline_keyboard=[
             [InlineKeyboardButton(text="Фразы RU", callback_data="txt:phrases_ru")],
             [InlineKeyboardButton(text="Фразы EN", callback_data="txt:phrases_en")],
-            [InlineKeyboardButton(text="Загрузить фразы RU", callback_data="txt:up_ru")],
-            [InlineKeyboardButton(text="Загрузить фразы EN", callback_data="txt:up_en")],
+            [InlineKeyboardButton(text="➕ Дописать RU", callback_data="txt:up_ru")],
+            [InlineKeyboardButton(text="➕ Дописать EN", callback_data="txt:up_en")],
+            [InlineKeyboardButton(text="♻️ Заменить RU", callback_data="txt:repl_ru")],
+            [InlineKeyboardButton(text="♻️ Заменить EN", callback_data="txt:repl_en")],
         ]
     )
 
@@ -761,8 +782,12 @@ async def cb_tgt_add(call: CallbackQuery, state: FSMContext) -> None:
         return
     await state.set_state(Form.waiting_targets)
     await call.message.answer(
-        "Пришлите список ботов (через пробел, запятую или с новой строки):\n"
-        "@bot1\nbot2\n@bot3\n\n/cancel — отмена"
+        "Пришлите список ботов (текст или .txt):\n"
+        "<code>@bot1</code>\n"
+        "<code>https://t.me/bot2</code>\n"
+        "<code>bot3</code>\n\n"
+        "Через пробел, запятую или с новой строки.\n"
+        "/cancel — отмена"
     )
     await call.answer()
 
@@ -876,57 +901,114 @@ async def cb_tgt_all_off(call: CallbackQuery) -> None:
     await call.answer()
 
 
+def _extract_usernames(text: str) -> list[str]:
+    """Достать @user / t.me/user / голые username из текста."""
+    if not text:
+        return []
+    found: list[str] = []
+    for rx in (USERNAME_RE, TME_RE):
+        found.extend(rx.findall(text))
+    # голые токены (по строкам / через пробел / запятую)
+    for part in re.split(r"[\s,;]+", text):
+        part = part.strip().lstrip("@")
+        if TME_RE.fullmatch(part) or part.lower().startswith("t.me/"):
+            m = TME_RE.search(part)
+            if m:
+                found.append(m.group(1))
+            continue
+        m = BARE_USER_RE.fullmatch(part)
+        if m:
+            found.append(m.group(1))
+
+    uniq: list[str] = []
+    seen: set[str] = set()
+    for u in found:
+        key = u.lower().lstrip("@")
+        if key in SKIP_TOKENS or key in seen:
+            continue
+        if len(key) < 4 or len(key) > 32:
+            continue
+        seen.add(key)
+        uniq.append(key)
+    return uniq
+
+
+async def _text_from_message(message: Message) -> str:
+    if message.document:
+        from io import BytesIO
+
+        buffer = BytesIO()
+        await message.bot.download(message.document, destination=buffer)
+        return buffer.getvalue().decode("utf-8", errors="ignore")
+    return message.text or message.caption or ""
+
+
 @router.message(Form.waiting_targets)
 async def on_targets_text(message: Message, state: FSMContext) -> None:
     if not is_admin(message.from_user.id if message.from_user else None):
         return
-    text = message.text or ""
-    found = USERNAME_RE.findall(text)
-    # filter noise
-    skip = {"http", "https", "t", "me", "telegram"}
-    usernames = []
-    for u in found:
-        if u.lower() in skip:
-            continue
-        if len(u) < 4:
-            continue
-        usernames.append(u.lower())
-    # unique preserve order
-    seen = set()
-    uniq = []
-    for u in usernames:
-        if u not in seen:
-            seen.add(u)
-            uniq.append(u)
+    text = await _text_from_message(message)
+    uniq = _extract_usernames(text)
 
     if not uniq:
-        await message.answer("Не нашёл username. Пример: @mybot bot2")
+        await message.answer(
+            "Не нашёл username.\n"
+            "Примеры:\n"
+            "<code>@mybot</code>\n"
+            "<code>https://t.me/mybot</code>\n"
+            "или список через пробел / с новой строки.\n"
+            "Можно прислать .txt файл."
+        )
         return
 
-    current = len(storage.list_targets())
-    added = []
+    from config import MAX_TARGETS
+
+    existing = storage.list_targets()
+    # лимит — только по неудалённым; уже известные всегда обновляем
+    non_deleted = sum(1 for t in existing.values() if t.get("status") != "deleted")
+    added: list[str] = []
+    updated: list[str] = []
+    skipped_limit: list[str] = []
+
     for u in uniq:
-        if current + len(added) >= 20:
-            break
+        if u in existing:
+            await storage.upsert_target(
+                u, {"selected": True, "status": "active", "deleted_at": None, "last_error": None}
+            )
+            updated.append(u)
+            continue
+        if non_deleted + len(added) >= MAX_TARGETS:
+            skipped_limit.append(u)
+            continue
         await storage.upsert_target(u, {"selected": True, "status": "active"})
         added.append(u)
 
     await state.clear()
-    await message.answer(
-        f"Добавлено: {len(added)}\n" + ", ".join(f"@{u}" for u in added),
-        reply_markup=main_menu(),
-    )
+    lines = [
+        f"Новых: {len(added)}",
+        f"Обновлено/выбрано: {len(updated)}",
+    ]
+    if added:
+        lines.append("Новые: " + ", ".join(f"@{u}" for u in added))
+    if updated:
+        lines.append("Обновлены: " + ", ".join(f"@{u}" for u in updated[:40]))
+    if skipped_limit:
+        lines.append(
+            f"Лимит {MAX_TARGETS} — не добавлены: "
+            + ", ".join(f"@{u}" for u in skipped_limit[:20])
+        )
+    await message.answer("\n".join(lines), reply_markup=main_menu())
 
 
 @router.message(Form.waiting_remove_target)
 async def on_remove_target(message: Message, state: FSMContext) -> None:
     if not is_admin(message.from_user.id if message.from_user else None):
         return
-    m = USERNAME_RE.search(message.text or "")
-    if not m:
+    found = _extract_usernames(message.text or message.caption or "")
+    if not found:
         await message.answer("Укажите username.")
         return
-    ok = await storage.remove_target(m.group(1))
+    ok = await storage.remove_target(found[0])
     await state.clear()
     await message.answer(
         "Удалён." if ok else "Не найден.",
@@ -958,54 +1040,109 @@ async def cb_txt_en(call: CallbackQuery) -> None:
 @router.callback_query(F.data == "txt:up_ru")
 async def cb_txt_up_ru(call: CallbackQuery, state: FSMContext) -> None:
     await state.set_state(Form.waiting_phrases_ru)
-    await call.message.answer("Пришлите фразы RU — по одной на строку (или .txt файл).\n/cancel")
+    await state.update_data(phrases_mode="append")
+    await call.message.answer(
+        "Пришлите фразы RU — по одной на строку (или .txt).\n"
+        "Они будут ДОПИСАНЫ к существующим.\n/cancel"
+    )
     await call.answer()
 
 
 @router.callback_query(F.data == "txt:up_en")
 async def cb_txt_up_en(call: CallbackQuery, state: FSMContext) -> None:
     await state.set_state(Form.waiting_phrases_en)
-    await call.message.answer("Пришлите фразы EN — по одной на строку (или .txt файл).\n/cancel")
+    await state.update_data(phrases_mode="append")
+    await call.message.answer(
+        "Пришлите фразы EN — по одной на строку (или .txt).\n"
+        "Они будут ДОПИСАНЫ к существующим.\n/cancel"
+    )
     await call.answer()
 
 
-async def _save_phrases_from_message(message: Message, lang: str) -> int:
+@router.callback_query(F.data == "txt:repl_ru")
+async def cb_txt_repl_ru(call: CallbackQuery, state: FSMContext) -> None:
+    await state.set_state(Form.waiting_phrases_ru)
+    await state.update_data(phrases_mode="replace")
+    await call.message.answer(
+        "Пришлите фразы RU — по одной на строку (или .txt).\n"
+        "⚠️ Старые фразы RU будут ПОЛНОСТЬЮ заменены.\n/cancel"
+    )
+    await call.answer()
+
+
+@router.callback_query(F.data == "txt:repl_en")
+async def cb_txt_repl_en(call: CallbackQuery, state: FSMContext) -> None:
+    await state.set_state(Form.waiting_phrases_en)
+    await state.update_data(phrases_mode="replace")
+    await call.message.answer(
+        "Пришлите фразы EN — по одной на строку (или .txt).\n"
+        "⚠️ Старые фразы EN будут ПОЛНОСТЬЮ заменены.\n/cancel"
+    )
+    await call.answer()
+
+
+async def _save_phrases_from_message(
+    message: Message, lang: str, *, mode: str = "append"
+) -> tuple[int, int]:
+    """Вернуть (добавлено/записано сейчас, всего в файле)."""
     from config import PHRASE_FILES
-    from io import BytesIO
 
-    if message.document:
-        buffer = BytesIO()
-        await message.bot.download(message.document, destination=buffer)
-        text = buffer.getvalue().decode("utf-8", errors="ignore")
-    else:
-        text = message.text or ""
-
+    text = await _text_from_message(message)
     lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
     if not lines:
-        return 0
+        return 0, 0
+
     path = PHRASE_FILES[lang]
-    path.write_text("\n".join(lines), encoding="utf-8")
-    return len(lines)
+    if mode == "replace":
+        path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        return len(lines), len(lines)
+
+    existing: list[str] = []
+    if path.exists():
+        existing = [ln.strip() for ln in path.read_text(encoding="utf-8").splitlines() if ln.strip()]
+    have = {x.lower() for x in existing}
+    added_lines = [ln for ln in lines if ln.lower() not in have]
+    if not added_lines and existing:
+        return 0, len(existing)
+    merged = existing + added_lines
+    path.write_text("\n".join(merged) + "\n", encoding="utf-8")
+    return len(added_lines), len(merged)
 
 
 @router.message(Form.waiting_phrases_ru)
 async def on_phrases_ru(message: Message, state: FSMContext) -> None:
-    n = await _save_phrases_from_message(message, "ru")
-    if n < 1:
+    data = await state.get_data()
+    mode = data.get("phrases_mode") or "append"
+    n, total = await _save_phrases_from_message(message, "ru", mode=mode)
+    if n < 1 and total < 1:
         await message.answer("Пусто.")
         return
     await state.clear()
-    await message.answer(f"Сохранено фраз RU: {n}", reply_markup=main_menu())
+    if mode == "replace":
+        await message.answer(f"Фразы RU заменены: {total}", reply_markup=main_menu())
+    else:
+        await message.answer(
+            f"Дописано RU: {n}, всего: {total}",
+            reply_markup=main_menu(),
+        )
 
 
 @router.message(Form.waiting_phrases_en)
 async def on_phrases_en(message: Message, state: FSMContext) -> None:
-    n = await _save_phrases_from_message(message, "en")
-    if n < 1:
+    data = await state.get_data()
+    mode = data.get("phrases_mode") or "append"
+    n, total = await _save_phrases_from_message(message, "en", mode=mode)
+    if n < 1 and total < 1:
         await message.answer("Пусто.")
         return
     await state.clear()
-    await message.answer(f"Сохранено фраз EN: {n}", reply_markup=main_menu())
+    if mode == "replace":
+        await message.answer(f"Фразы EN заменены: {total}", reply_markup=main_menu())
+    else:
+        await message.answer(
+            f"Дописано EN: {n}, всего: {total}",
+            reply_markup=main_menu(),
+        )
 
 
 @router.message(StateFilter(None))

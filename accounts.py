@@ -17,7 +17,7 @@ from telethon.errors import (
 )
 from telethon.tl.functions.contacts import UnblockRequest
 
-from config import API_HASH, API_ID, SESSIONS_DIR, SKIP_SPAMBLOCKED
+from config import API_HASH, API_ID, MAX_ACCOUNTS, SESSIONS_DIR, SKIP_SPAMBLOCKED
 from storage import storage, utc_now
 from tg_errors import short_error
 
@@ -51,8 +51,13 @@ class AccountManager:
         phone = self.normalize_phone(phone)
         account_id = (account_id or self.phone_to_account_id(phone)).replace(" ", "_")
 
-        if len(storage.list_accounts()) >= 20 and account_id not in storage.list_accounts():
-            raise ValueError("Лимит 20 аккаунтов. Удалите лишние перед добавлением.")
+        if (
+            len(storage.list_accounts()) >= MAX_ACCOUNTS
+            and account_id not in storage.list_accounts()
+        ):
+            raise ValueError(
+                f"Лимит {MAX_ACCOUNTS} аккаунтов. Удалите лишние перед добавлением."
+            )
 
         await self.cancel_phone_login(account_id)
 
@@ -172,8 +177,13 @@ class AccountManager:
                         pass
 
     async def add_session_file(self, src_path: Path, account_id: str | None = None) -> str:
-        if len(storage.list_accounts()) >= 20 and account_id not in storage.list_accounts():
-            raise ValueError("Лимит 20 аккаунтов. Удалите лишние перед добавлением.")
+        if (
+            len(storage.list_accounts()) >= MAX_ACCOUNTS
+            and account_id not in storage.list_accounts()
+        ):
+            raise ValueError(
+                f"Лимит {MAX_ACCOUNTS} аккаунтов. Удалите лишние перед добавлением."
+            )
 
         account_id = (account_id or src_path.stem).replace(" ", "_")
         dest = self.session_path(account_id)
@@ -229,9 +239,11 @@ class AccountManager:
         if not accounts:
             raise ValueError("В tdata нет аккаунтов.")
 
-        free_slots = 20 - len(storage.list_accounts())
+        free_slots = MAX_ACCOUNTS - len(storage.list_accounts())
         if free_slots <= 0:
-            raise ValueError("Лимит 20 аккаунтов. Удалите лишние перед добавлением.")
+            raise ValueError(
+                f"Лимит {MAX_ACCOUNTS} аккаунтов. Удалите лишние перед добавлением."
+            )
 
         results: list[dict] = []
         for i, account in enumerate(accounts):
@@ -239,7 +251,7 @@ class AccountManager:
                 results.append(
                     {
                         "status": "skipped",
-                        "error": "Достигнут лимит 20 аккаунтов",
+                        "error": f"Достигнут лимит {MAX_ACCOUNTS} аккаунтов",
                         "index": i,
                     }
                 )
@@ -292,7 +304,7 @@ class AccountManager:
                         "index": i,
                     }
                 )
-                free_slots = 20 - len(storage.list_accounts())
+                free_slots = MAX_ACCOUNTS - len(storage.list_accounts())
             except Exception as e:
                 logger.exception("tdata account[%s] failed", i)
                 err = str(e)
