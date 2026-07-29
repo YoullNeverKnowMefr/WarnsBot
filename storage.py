@@ -114,6 +114,38 @@ class Storage:
         await self.save()
         return True
 
+    async def remove_targets(self, usernames: list[str]) -> list[str]:
+        removed: list[str] = []
+        for raw in usernames:
+            key = raw.lstrip("@").lower()
+            if key in self.data["targets"]:
+                del self.data["targets"][key]
+                removed.append(key)
+        if removed:
+            await self.save()
+        return removed
+
+    async def remove_targets_by_statuses(self, statuses: set[str] | list[str]) -> list[str]:
+        want = {s.lower() for s in statuses}
+        removed = [
+            uname
+            for uname, t in list(self.data["targets"].items())
+            if (t.get("status") or "").lower() in want
+        ]
+        for uname in removed:
+            del self.data["targets"][uname]
+        if removed:
+            await self.save()
+        return removed
+
+    def targets_by_statuses(self, statuses: set[str] | list[str]) -> list[dict]:
+        want = {s.lower() for s in statuses}
+        return [
+            t
+            for t in self.data["targets"].values()
+            if (t.get("status") or "").lower() in want
+        ]
+
     async def set_target_selected(self, username: str, selected: bool) -> bool:
         key = username.lstrip("@").lower()
         target = self.data["targets"].get(key)

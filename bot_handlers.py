@@ -99,7 +99,13 @@ def targets_kb() -> InlineKeyboardMarkup:
     rows = [
         [InlineKeyboardButton(text="➕ Добавить ботов", callback_data="tgt:add")],
         [InlineKeyboardButton(text="📋 Список / выбор", callback_data="tgt:list")],
-        [InlineKeyboardButton(text="🗑 Удалить", callback_data="tgt:del")],
+        [InlineKeyboardButton(text="🗑 Удалить (кнопки)", callback_data="tgt:del_ui")],
+        [InlineKeyboardButton(text="🗑 Удалить (списком)", callback_data="tgt:del")],
+        [
+            InlineKeyboardButton(
+                text="🧹 Убрать мёртвых/удалённых", callback_data="tgt:purge_dead"
+            )
+        ],
         [InlineKeyboardButton(text="✅ Выбрать все", callback_data="tgt:all_on")],
         [InlineKeyboardButton(text="⬜ Снять все", callback_data="tgt:all_off")],
     ]
@@ -817,6 +823,8 @@ def _targets_select_rows(targets: dict) -> list:
         st = t.get("status") or "?"
         if st == "deleted":
             mark = "🗑"
+        elif st == "unreachable":
+            mark = "🚫"
         elif t.get("selected"):
             mark = "✅"
         else:
@@ -829,6 +837,29 @@ def _targets_select_rows(targets: dict) -> list:
                 )
             ]
         )
+    rows.append([InlineKeyboardButton(text="Закрыть", callback_data="tgt:close")])
+    return rows
+
+
+def _targets_delete_rows(targets: dict) -> list:
+    rows = []
+    for uname, t in targets.items():
+        st = t.get("status") or "?"
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text=f"❌ @{uname} [{st}]",
+                    callback_data=f"tgt:rm:{uname}",
+                )
+            ]
+        )
+    rows.append(
+        [
+            InlineKeyboardButton(
+                text="🧹 Убрать всех мёртвых", callback_data="tgt:purge_dead"
+            )
+        ]
+    )
     rows.append([InlineKeyboardButton(text="Закрыть", callback_data="tgt:close")])
     return rows
 
@@ -864,14 +895,80 @@ async def cb_tgt_close(call: CallbackQuery) -> None:
     await call.answer()
 
 
+@router.callback_query(F.data == "tgt:del_ui")
+async def cb_tgt_del_ui(call: CallbackQuery) -> None:
+    if not is_admin(call.from_user.id):
+        await call.answer("Нет доступа", show_alert=True)
+        return
+    targets = storage.list_targets()
+    if not targets:
+        await call.message.answer("Список пуст.")
+        await call.answer()
+        return
+    await call.message.answer(
+        "Нажмите на бота, чтобы удалить его из списка:",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=_targets_delete_rows(targets)),
+    )
+    await call.answer()
+
+
+@router.callback_query(F.data.startswith("tgt:rm:"))
+async def cb_tgt_rm(call: CallbackQuery) -> None:
+    if not is_admin(call.from_user.id):
+        await call.answer("Нет доступа", show_alert=True)
+        return
+    uname = call.data.split(":", 2)[2]
+    ok = await storage.remove_target(uname)
+    if not ok:
+        await call.answer("Не найден", show_alert=True)
+        return
+    await call.answer(f"@{uname} удалён")
+    targets = storage.list_targets()
+    if not targets:
+        try:
+            await call.message.edit_text("Список пуст.")
+        except Exception:
+            await call.message.answer("Список пуст.")
+        return
+    try:
+        await call.message.edit_reply_markup(
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=_targets_delete_rows(targets))
+        )
+    except Exception:
+        pass
+
+
+@router.callback_query(F.data == "tgt:purge_dead")
+async def cb_tgt_purge_dead(call: CallbackQuery) -> None:
+    if not is_admin(call.from_user.id):
+        await call.answer("Нет доступа", show_alert=True)
+        return
+    # deleted = удалённые в Telegram; unreachable = недоступные/битые
+    dead = storage.targets_by_statuses({"deleted", "unreachable"})
+    if not dead:
+        await call.answer("Нет мёртвых/удалённых ботов", show_alert=True)
+        return
+    removed = await storage.remove_targets_by_statuses({"deleted", "unreachable"})
+    await call.answer()
+    await call.message.answer(
+        f"Убрано из списка: {len(removed)}\n"
+        + ", ".join(f"@{u}" for u in removed[:50]),
+        reply_markup=main_menu(),
+    )
+
+
 @router.callback_query(F.data == "tgt:del")
 async def cb_tgt_del(call: CallbackQuery, state: FSMContext) -> None:
     if not is_admin(call.from_user.id):
         await call.answer("Нет доступа", show_alert=True)
         return
     await state.set_state(Form.waiting_remove_target)
-    names = ", ".join(f"@{u}" for u in storage.list_targets())
-    await call.message.answer(f"Введите username бота для удаления:\n{names}\n/cancel")
+    names = ", ".join(f"@{u}" for u in storage.list_targets()) or "—"
+    await call.message.answer(
+        "Пришлите username ботов для удаления из списка "
+        "(один или несколько, текст/.txt):\n"
+        f"{names}\n/cancel"
+    )
     await call.answer()
 
 
@@ -1004,16 +1101,20 @@ async def on_targets_text(message: Message, state: FSMContext) -> None:
 async def on_remove_target(message: Message, state: FSMContext) -> None:
     if not is_admin(message.from_user.id if message.from_user else None):
         return
-    found = _extract_usernames(message.text or message.caption or "")
+    text = await _text_from_message(message)
+    found = _extract_usernames(text)
     if not found:
-        await message.answer("Укажите username.")
+        await message.answer("Укажите username (можно несколько).")
         return
-    ok = await storage.remove_target(found[0])
+    removed = await storage.remove_targets(found)
     await state.clear()
-    await message.answer(
-        "Удалён." if ok else "Не найден.",
-        reply_markup=main_menu(),
-    )
+    missing = [u for u in found if u not in removed]
+    lines = [f"Удалено из списка: {len(removed)}"]
+    if removed:
+        lines.append(", ".join(f"@{u}" for u in removed))
+    if missing:
+        lines.append("Не найдены: " + ", ".join(f"@{u}" for u in missing))
+    await message.answer("\n".join(lines), reply_markup=main_menu())
 
 
 # ---- texts ----
